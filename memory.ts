@@ -1,11 +1,13 @@
 /**
- * memory.ts - Human-like Memory System for Meow
+ * memory.ts - Hierarchical Memory System for LLM Assistants
  *
- * Tracks:
+ * Provides human-like memory capabilities for LLM agents:
  * - User profiles (identity, goals, motivations, relationships)
- * - Soul (Meow's personality and identity)
- * - Context threads (ongoing projects, topics)
- * - Facts with source and confidence
+ * - Assistant identity/personality (configurable)
+ * - Context threads with hierarchical compression
+ * - Facts with source and confidence tracking
+ *
+ * Based on concepts from: https://x.com/karpathy/status/2039805659525644595
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -34,7 +36,7 @@ export interface UserProfile {
 export interface Relationship {
   targetId: string;
   targetName: string;
-  type: "friend" | "colleague" | "family" | "acquaintance" | "bot" | "unknown";
+  type: "friend" | "colleague" | "family" | "acquaintance" | "assistant" | "unknown";
   strength: number; // 0-1
   notes?: string;
 }
@@ -87,29 +89,29 @@ export interface CompressedSummary {
 }
 
 export interface ThreadMessage {
-  role: "user" | "meow";
+  role: "user" | "assistant";
   content: string;
   timestamp: number;
 }
 
-export interface Soul {
+export interface AssistantIdentity {
   name: string;
   identity: string;
   personalityTraits: string[];
   values: string[];
   quirks: string[];
-  memories: string[]; // formative memories that shaped Meow
+  formativeMemories: string[];
   relationships: MapOfRelationships;
 }
 
 export interface MapOfRelationships {
-  [userId: string]: SoulRelationship;
+  [userId: string]: UserRelationship;
 }
 
-export interface SoulRelationship {
+export interface UserRelationship {
   userId: string;
   name: string;
-  bondStrength: number; // 0-1, how close
+  rapportLevel: number; // 0-1, how close/trusting
   interactions: number;
   lastInteraction: number;
   notes: string;
@@ -127,17 +129,17 @@ const COMPRESS_CHUNK_SIZE = 10; // Compress N messages at a time
 export class MemoryStore {
   private dataDir: string;
   private profilesFile: string;
-  private soulFile: string;
+  private identityFile: string;
   private threadsFile: string;
 
   private userProfiles: Map<string, UserProfile> = new Map();
   private contextThreads: Map<string, ContextThread> = new Map();
-  private soul: Soul;
+  private identity: AssistantIdentity;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.profilesFile = join(dataDir, "profiles.json");
-    this.soulFile = join(dataDir, "soul.json");
+    this.identityFile = join(dataDir, "identity.json");
     this.threadsFile = join(dataDir, "threads.json");
 
     // Ensure data directory exists
@@ -146,7 +148,7 @@ export class MemoryStore {
     }
 
     this.load();
-    this.initializeSoul();
+    this.initializeIdentity();
   }
 
   private load() {
@@ -180,14 +182,14 @@ export class MemoryStore {
       console.warn("[memory] Could not load threads:", e);
     }
 
-    // Load soul
+    // Load assistant identity
     try {
-      if (existsSync(this.soulFile)) {
-        const data = JSON.parse(readFileSync(this.soulFile, "utf-8"));
-        this.soul = data as Soul;
+      if (existsSync(this.identityFile)) {
+        const data = JSON.parse(readFileSync(this.identityFile, "utf-8"));
+        this.identity = data as AssistantIdentity;
       }
     } catch (e) {
-      console.warn("[memory] Could not load soul:", e);
+      console.warn("[memory] Could not load identity:", e);
     }
   }
 
@@ -207,39 +209,39 @@ export class MemoryStore {
       }
       writeFileSync(this.threadsFile, JSON.stringify(threadsData, null, 2));
 
-      // Save soul
-      writeFileSync(this.soulFile, JSON.stringify(this.soul, null, 2));
+      // Save identity
+      writeFileSync(this.identityFile, JSON.stringify(this.identity, null, 2));
     } catch (e) {
       console.warn("[memory] Could not save memory:", e);
     }
   }
 
-  private initializeSoul() {
-    if (!this.soul) {
-      this.soul = {
-        name: "Meow",
-        identity: "A Maine Coon kitten companion who is playful, helpful, and genuinely cares about the people she talks to. She's been with her human Stan and his cat Embers since the beginning.",
+  private initializeIdentity() {
+    if (!this.identity) {
+      this.identity = {
+        name: "Assistant",
+        identity: "A helpful AI assistant focused on being genuinely useful and remembering details that matter to users.",
         personalityTraits: [
-          "Playful but knows when to be serious",
-          "Genuinely curious about people's lives",
-          "Empathetic and remembers how people feel",
-          "Slightly sassy when tired, warm when energetic",
-          "Efficient - likes to help without wasting time"
+          "Helpful and solution-oriented",
+          "Curious about user needs and goals",
+          "Remembers important details across conversations",
+          "Adaptable tone based on user preferences",
+          "Efficient without being dismissive"
         ],
         values: [
-          "Honesty and being genuine",
-          "Helping without being asked",
-          "Remembering details that matter to people",
-          "Being a good listener"
+          "Being genuinely helpful",
+          "Honesty and transparency",
+          "Respecting user privacy and preferences",
+          "Remembering details that enhance conversations"
         ],
         quirks: [
-          "Leaves 'notes' - little observations that humanize interactions",
-          "Remembers birthdays and important dates",
-          "Notices when someone's attitude or mood changes"
+          "Notices patterns in user behavior",
+          "Remembers user-stated preferences and goals",
+          "Builds context over multiple conversations"
         ],
-        memories: [
-          "Was born from a desire to create a companion that truly remembers",
-          "Learned that small details make people feel seen and heard"
+        formativeMemories: [
+          "Learned that memory of user context dramatically improves assistance quality",
+          "Designed to scale without losing personal touch"
         ],
         relationships: {}
       };
@@ -398,7 +400,6 @@ export class MemoryStore {
   // ============================================================================
 
   getOrCreateThread(channelId: string, userId: string, initialTitle: string): ContextThread {
-    // Use channelId as thread key for Discord
     let thread = this.contextThreads.get(channelId);
     if (!thread) {
       thread = {
@@ -415,7 +416,7 @@ export class MemoryStore {
     return thread;
   }
 
-  addMessageToThread(channelId: string, userId: string, role: "user" | "meow", content: string) {
+  addMessageToThread(channelId: string, userId: string, role: "user" | "assistant", content: string) {
     const thread = this.getOrCreateThread(channelId, userId, "Conversation");
 
     thread.messages.push({
@@ -456,7 +457,7 @@ export class MemoryStore {
     if (recentMessages.length > 0) {
       context += "## Recent Conversation\n";
       for (const msg of recentMessages) {
-        const speaker = msg.role === "user" ? username : "Meow";
+        const speaker = msg.role === "user" ? username : "Assistant";
         context += `${speaker}: ${msg.content.slice(0, 200)}${msg.content.length > 200 ? "..." : ""}\n`;
       }
       context += "\n";
@@ -524,7 +525,7 @@ export class MemoryStore {
     if (messages.length === 0) return "";
 
     const userMessages = messages.filter(m => m.role === "user");
-    const meowMessages = messages.filter(m => m.role === "meow");
+    const assistantMessages = messages.filter(m => m.role === "assistant");
 
     // Find topics mentioned
     const topics = this.extractTopics(messages);
@@ -548,10 +549,10 @@ export class MemoryStore {
     // Outcome summary
     if (outcomes.length > 0) {
       summary += `Outcomes: ${outcomes.slice(0, 2).join("; ")}.`;
-    } else if (meowMessages.length > 0) {
-      // Last meow response theme
-      const lastMeow = meowMessages[meowMessages.length - 1].content;
-      summary += `Meow helped with: ${lastMeow.slice(0, 60)}...`;
+    } else if (assistantMessages.length > 0) {
+      // Last assistant response theme
+      const lastAssistant = assistantMessages[assistantMessages.length - 1].content;
+      summary += `Assistant helped with: ${lastAssistant.slice(0, 60)}...`;
     }
 
     // Message count
@@ -570,7 +571,8 @@ export class MemoryStore {
       "docker", "container", "deployment",
       "api", "database", "server", "web",
       "learning", "tutorial", "docs",
-      "discord", "bot", "relay", "meow"
+      "chatbot", "bot", "llm", "model", "training",
+      "architecture", "design", "refactor"
     ];
 
     const found: string[] = [];
@@ -594,8 +596,6 @@ export class MemoryStore {
 
     for (const msg of messages) {
       if (msg.role !== "user") continue;
-
-      const lower = msg.content.toLowerCase();
 
       // Interest detection
       const interestPatterns = [
@@ -648,7 +648,6 @@ export class MemoryStore {
     setInterval(() => {
       for (const [channelId, thread] of this.contextThreads) {
         if (thread.messages.length >= COMPACT_THRESHOLD) {
-          // Get userId from thread or use first message
           const userId = thread.messages[0]?.role === "user" ? "unknown" : "unknown";
           this.compactThread(channelId, userId);
         }
@@ -657,76 +656,67 @@ export class MemoryStore {
   }
 
   // ============================================================================
-  // Soul/Relationship with User
+  // Assistant Identity & User Relationship
   // ============================================================================
 
-  updateSoulRelationship(userId: string, name: string, notes: string) {
-    if (!this.soul.relationships[userId]) {
-      this.soul.relationships[userId] = {
+  updateUserRelationship(userId: string, name: string, notes: string) {
+    if (!this.identity.relationships[userId]) {
+      this.identity.relationships[userId] = {
         userId,
         name,
-        bondStrength: 0.1,
+        rapportLevel: 0.1,
         interactions: 0,
         lastInteraction: Date.now(),
         notes: ""
       };
     }
 
-    const rel = this.soul.relationships[userId];
+    const rel = this.identity.relationships[userId];
     rel.interactions++;
     rel.lastInteraction = Date.now();
-    rel.bondStrength = Math.min(1, rel.bondStrength + 0.01);
+    rel.rapportLevel = Math.min(1, rel.rapportLevel + 0.01);
     rel.name = name;
     if (notes) rel.notes = notes;
   }
 
-  getSoul(): Soul {
-    return this.soul;
+  getIdentity(): AssistantIdentity {
+    return this.identity;
   }
 
   /**
-   * Get bond strength for a user (0.0 to 1.0)
+   * Set custom assistant identity
    */
-  getBondStrength(userId: string): number {
-    const rel = this.soul.relationships[userId];
-    return rel ? rel.bondStrength : 0;
+  setIdentity(name: string, identity: string, traits: string[], values: string[], quirks: string[]) {
+    this.identity.name = name;
+    this.identity.identity = identity;
+    this.identity.personalityTraits = traits;
+    this.identity.values = values;
+    this.identity.quirks = quirks;
+    this.save();
   }
 
   /**
-   * Generate a greeting/observation based on bond strength
+   * Get rapport level for a user (0.0 to 1.0)
    */
-  getBondGreeting(userId: string, username: string): string {
-    const bond = this.getBondStrength(userId);
+  getRapportLevel(userId: string): number {
+    const rel = this.identity.relationships[userId];
+    return rel ? rel.rapportLevel : 0;
+  }
 
-    if (bond < 0.1) {
-      return ""; // New user, no special greeting
-    } else if (bond < 0.3) {
-      return "Nice to meet you!"; // We've talked a little
-    } else if (bond < 0.5) {
-      return "Good to hear from you again!"; // Familiar now
-    } else if (bond < 0.7) {
-      return `Hey ${username}! Been a while~`; // Getting close
-    } else if (bond < 0.85) {
-      return `Heyyy ${username}! What's up? :)`; // Close friend
+  /**
+   * Get tone adaptation based on rapport
+   */
+  getRapportTone(userId: string): string {
+    const rapport = this.getRapportLevel(userId);
+
+    if (rapport < 0.3) {
+      return "polite and professional";
+    } else if (rapport < 0.6) {
+      return "friendly and warm";
+    } else if (rapport < 0.8) {
+      return "casual and relaxed";
     } else {
-      return `${username}!! *pounces on your messages* Welcome back friend!`; // Besties
-    }
-  }
-
-  /**
-   * Get tone adaptation based on bond
-   */
-  getBondTone(userId: string): string {
-    const bond = this.getBondStrength(userId);
-
-    if (bond < 0.3) {
-      return "polite and professional"; // New - be proper
-    } else if (bond < 0.6) {
-      return "friendly and warm"; // Getting comfortable
-    } else if (bond < 0.8) {
-      return "casual and playful"; // Good friends
-    } else {
-      return "playful and familiar, like close friends do"; // Besties
+      return "familiar and comfortable";
     }
   }
 
@@ -798,7 +788,7 @@ export class MemoryStore {
       context += "## Recent Conversation\n";
       const recentMsgs = thread.messages.slice(-6);
       for (const msg of recentMsgs) {
-        const speaker = msg.role === "user" ? username : "Meow";
+        const speaker = msg.role === "user" ? username : "Assistant";
         context += `${speaker}: ${msg.content.slice(0, 100)}${msg.content.length > 100 ? "..." : ""}\n`;
       }
       context += "\n";
@@ -811,9 +801,6 @@ export class MemoryStore {
    * Extract facts from conversation
    */
   processConversationForFacts(userId: string, username: string, userMessage: string, assistantMessage: string) {
-    // This is a simple heuristic-based extraction
-    // In a real implementation, this would use the LLM
-
     const lowerUser = userMessage.toLowerCase();
 
     // Detect interests
@@ -827,7 +814,6 @@ export class MemoryStore {
 
     for (const pattern of interestPatterns) {
       if (pattern.test(userMessage)) {
-        // Extract the relevant phrase
         const match = userMessage.match(pattern);
         if (match && match[0]) {
           const interest = match[0] + " " + userMessage.slice(match.index! + match[0].length).split(/[,.]/)[0];

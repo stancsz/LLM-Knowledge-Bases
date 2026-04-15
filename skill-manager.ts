@@ -1,8 +1,8 @@
 /**
- * skill-manager.ts - Skill Management for Meow
+ * skill-manager.ts - Skill Management System
  *
- * Handles skill installation and management via bash commands.
- * Skills are installed to .claude/skills/ in CLAUDE_CWD
+ * Handles skill installation and management for Claude Code.
+ * Skills are installed to .claude/skills/ in the working directory.
  */
 
 import { existsSync, readFileSync, cpSync, rmSync, mkdirSync, chownSync } from "node:fs";
